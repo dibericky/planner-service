@@ -15,6 +15,11 @@ const QUEUE_SAVED = 'popcorn-planner.tvserie-saved'
 const QUEUE_CREATE_PLAN = 'popcorn-planner.create-plan'
 const QUEUE_CREATED_PLAN = 'popcorn-planner.plan-created'
 
+const PLAN_STATE = {
+    CREATED: 'created',
+    CREATING: 'creating'
+}
+
 async function connectMongo(logger, connectionString) {
     logger.info('connecting to MongoDB')
     const client = new MongoClient(connectionString, { useNewUrlParser: true, useUnifiedTopology: true });
@@ -69,49 +74,68 @@ async function handleConsumeCreatePlan(logger, msg, mongoDb, channel) {
     const tvSerie = await getTvSerieData(logger, mongoDb, title)
     if (!tvSerie) {
         sendMessageToRetrieveTvSerie(logger, channel, title)
-        await savePlan(logger, mongoDb, title, {episodesPerDay, planState: 'creating'})
+        await savePlan(logger, mongoDb, title, {episodesPerDay, planState: PLAN_STATE.CREATING})
         return
     }
-    throw new Error('unimplemented')
+    const {numberOfEpisodes} = tvSerie
+    await savePlan(logger, mongoDb, title, {
+        episodesPerDay,
+        totalDays: getTotalDaysPlan(numberOfEpisodes, episodesPerDay),
+        planState: PLAN_STATE.CREATED
+    })
+    sendMessagePlanCreated(logger, title, channel)
 }
 
 async function savePlan(logger, mongoDb, title, values) {
     logger.debug({collection: PLANS_COLLECTION, title, ...values}, 'saving plan')
-    await mongoDb.collection(PLANS_COLLECTION).update({
+    await mongoDb.collection(PLANS_COLLECTION).updateOne({
         title
     }, {
         $set: values
     }, {upsert: true})
 }
 
+function getTotalDaysPlan (numberOfEpisodes, episodesPerDay) {
+    return parseInt(numberOfEpisodes / episodesPerDay, 10) + (numberOfEpisodes%episodesPerDay > 0 ? 1 : 0)
+}
+
 async function createPlan (logger, mongoDb, title, numberOfEpisodes) {
     logger.debug({title}, 'looking for plan in creating state for tv serie')
     const plan = await mongoDb.collection(PLANS_COLLECTION).findOne({
         title,
-        planState: 'creating'
+        planState: PLAN_STATE.CREATING
     })
     if (!plan) {
         throw new Error('Expected to find a plan in creating state for '+title)
     }
     const {episodesPerDay} = plan
-    const neededNumberOfDays = () => parseInt(numberOfEpisodes / episodesPerDay, 10) + (numberOfEpisodes%episodesPerDay > 0 ? 1 : 0)
     return {
-        totalDays: neededNumberOfDays(),
+        totalDays: getTotalDaysPlan(numberOfEpisodes, episodesPerDay),
         title
     }
 }
 
-async function handleConsumeTvSerieSaved(logger, msg, mongoDb, channel) {
+async function handleConsumeTvSerieSaved(logger, msg, mongoDb) {
     const { title } = msg
     const tvSerie = await getTvSerieData(logger, mongoDb, title)
     if (!tvSerie) {
         throw new Error('Unexpected tv serie not found '+title)
     }
     const plan = await createPlan(logger, mongoDb, title, tvSerie.numberOfEpisodes)
-    await savePlan(logger, mongoDb, title, {planState: 'created', totalDays: plan.totalDays})
+    await savePlan(logger, mongoDb, title, {planState: PLAN_STATE.CREATED, totalDays: plan.totalDays})
     return {
         title
     }
+}
+
+function sendMessagePlanCreated (logger, title, channel) {
+    logger.debug({queue: QUEUE_CREATED_PLAN, title}, 'sending message that plan has been created')
+    channel.assertQueue(QUEUE_CREATED_PLAN, {
+        durable: true
+    })
+    channel.sendToQueue(QUEUE_CREATED_PLAN, Buffer.from(JSON.stringify({title})), {
+        persistent: true
+    })
 }
 
 async function run(logger, { RABBITMQ_CONN_STRING, MONGODB_CONN_STRING }) {
@@ -146,15 +170,7 @@ async function run(logger, { RABBITMQ_CONN_STRING, MONGODB_CONN_STRING }) {
         logger.debug({ queue: QUEUE_SAVED, msg: msg.content.toString() }, 'received message')
         handleConsumeTvSerieSaved(logger, JSON.parse(msg.content.toString()), mongoDb, channel)
             .then(({title}) => {
-                logger.debug({queue: QUEUE_CREATED_PLAN, title}, 'sending message that plan has been created')
-
-                channel.assertQueue(QUEUE_CREATED_PLAN, {
-                    durable: true
-                })
-                channel.sendToQueue(QUEUE_CREATED_PLAN, Buffer.from(JSON.stringify({title})), {
-                    persistent: true
-                })
-
+                sendMessagePlanCreated(logger, title, channel)
                 logger.info({ queue: QUEUE_SAVED }, 'Sending ack of tvserie-saved')
                 channel.ack(msg)
             })

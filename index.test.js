@@ -3,8 +3,8 @@
 const tap = require('tap')
 const {MongoClient} = require('mongodb')
 const amqp = require('amqplib')
-const logger = require('pino')({level: 'debug'})
-const {omit, all} = require('ramda')
+const logger = require('pino')({level: 'trace'})
+const {omit} = require('ramda')
 const sinon = require('sinon')
 
 const main = require('./index')
@@ -20,12 +20,21 @@ const savedQueue = 'popcorn-planner.tvserie-saved'
 const createdPlanQueue = 'popcorn-planner.plan-created'
 
 tap.test('main', t => {
+    let mongoDbClient
+
+    t.before(async () => {
+        mongoDbClient = new MongoClient(envs.MONGODB_CONN_STRING, { useNewUrlParser: true, useUnifiedTopology: true });
+        await mongoDbClient.connect()
+    })
+
+    t.teardown(async () => {
+        await mongoDbClient.close()            
+    })
+
     t.test('on "create-plan" message received', t => {
-        let mongoDbClient, rabbitMqConnection, channel
+        let rabbitMqConnection, channel
 
         t.beforeEach(async () => {
-            mongoDbClient = new MongoClient(envs.MONGODB_CONN_STRING, { useNewUrlParser: true, useUnifiedTopology: true });
-            await mongoDbClient.connect()
             await mongoDbClient.db().dropDatabase()
 
             rabbitMqConnection = await amqp.connect(envs.RABBITMQ_CONN_STRING)
@@ -39,9 +48,6 @@ tap.test('main', t => {
             await channel.deleteQueue(retrieveQueue)
             
             rabbitMqConnection.close()
-
-            await mongoDbClient.db().dropDatabase()
-            await mongoDbClient.close()
         })
         t.test('if title does not exist in collection, send "retrieve" title', async t => {
             channel.assertQueue(retrieveQueue, {
@@ -75,15 +81,63 @@ tap.test('main', t => {
         
             t.end()
         })
+
+        t.test('if title exists in collection, generate plan for saved tv-serie', async t => {
+            const plansBefore = await mongoDbClient.db().collection('plans').find({}).toArray()
+            t.strictSame(plansBefore.length, 0)
+
+            channel.assertQueue(retrieveQueue, {
+                durable: true
+            });
+            const retrieveCallbackMock = sinon.spy()
+            channel.consume(retrieveQueue, retrieveCallbackMock, {noAck: true})
+            
+            channel.assertQueue(createdPlanQueue, {
+                durable: true
+            });
+            const createPlanCallbackMock = sinon.spy()
+            channel.consume(createdPlanQueue, createPlanCallbackMock, {noAck: true})
+            
+            await mongoDbClient.db().collection('tvseries').insertOne({
+                serieId: 'the-serie-id',
+                numberOfEpisodes: 300,
+                title: 'Supernatural',
+                createdAt: new Date(),
+                updatedAt: new Date()
+            })
+
+            const close = await main(logger, envs)
+            await sendCreatePlanTestMessage(channel)
+    
+            await wait(1000)
+
+            t.equal(retrieveCallbackMock.callCount, 0)
+
+            t.equal(createPlanCallbackMock.callCount, 1)
+            const {args} = createPlanCallbackMock.getCall(0)
+            t.strictSame(args.length, 1)
+            t.strictSame(JSON.parse(args[0].content.toString()), {title: 'Supernatural'})
+
+            const plans = await mongoDbClient.db().collection('plans').find({}).toArray()
+            t.strictSame(plans.length, 1)
+            t.strictSame(omit(['_id'], plans[0]), {
+                title: 'Supernatural',
+                planState: 'created',
+                episodesPerDay: 3,
+                totalDays: 100
+            })
+
+            await close()
+        
+            t.end()
+        })
         t.end()
     })
 
     t.test('on "tvserie-saved" message received', t => {
-        let mongoDbClient, rabbitMqConnection, channel
+        let rabbitMqConnection, channel
 
         t.beforeEach(async () => {
-            mongoDbClient = new MongoClient(envs.MONGODB_CONN_STRING, { useNewUrlParser: true, useUnifiedTopology: true });
-            await mongoDbClient.connect()
             await mongoDbClient.db().dropDatabase()
 
             rabbitMqConnection = await amqp.connect(envs.RABBITMQ_CONN_STRING)
@@ -97,9 +151,6 @@ tap.test('main', t => {
             await channel.deleteQueue(createdPlanQueue)
             
             rabbitMqConnection.close()
-
-            await mongoDbClient.db().dropDatabase()
-            await mongoDbClient.close()
         })
         t.test('generate plan for saved tv-serie', async t => {
             channel.assertQueue(createdPlanQueue, {
