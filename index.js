@@ -23,6 +23,7 @@ async function connectMongo(logger, connectionString) {
 async function getTvSerieData(logger, mongoDb, title) {
     const tvSerie = await mongoDb.collection(TVSERIES_COLLECTION).findOne({ title: title })
     logger.debug({ tvSerie, title, collection: TVSERIES_COLLECTION }, 'document found')
+    return tvSerie
 }
 
 function sendMessageToRetrieveTvSerie(logger, channel, title) {
