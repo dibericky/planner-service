@@ -1,0 +1,38 @@
+{
+  "name": "planner-service",
+  "version": "0.0.1",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "npx tap ./*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dibericky/planner-service.git"
+  },
+  "author": "Riccardo Di Benedetto",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/dibericky/planner-service/issues"
+  },
+  "homepage": "https://github.com/dibericky/planner-service#readme",
+  "devDependencies": {
+    "nock": "^13.1.3",
+    "ramda": "^0.27.1",
+    "sinon": "^11.1.2",
+    "tap": "^15.0.9"
+  },
+  "dependencies": {
+    "amqplib": "^0.8.0",
+    "axios": "^0.21.4",
+    "dotenv": "^10.0.0",
+    "mongodb": "^4.1.2",
+    "pino": "^6.13.2"
+  },
+  "tap": {
+    "branches": 10,
+    "lines": 80,
+    "functions": 80,
+    "statements": 80
+  }
+}
