@@ -77,10 +77,8 @@ async function handleConsumeCreatePlan(logger, msg, mongoDb, channel) {
         await savePlan(logger, mongoDb, title, {episodesPerDay, planState: PLAN_STATE.CREATING})
         return
     }
-    const {numberOfEpisodes} = tvSerie
     await savePlan(logger, mongoDb, title, {
         episodesPerDay,
-        totalDays: getTotalDaysPlan(numberOfEpisodes, episodesPerDay),
         planState: PLAN_STATE.CREATED
     })
     sendMessagePlanCreated(logger, title, channel)
@@ -95,11 +93,7 @@ async function savePlan(logger, mongoDb, title, values) {
     }, {upsert: true})
 }
 
-function getTotalDaysPlan (numberOfEpisodes, episodesPerDay) {
-    return parseInt(numberOfEpisodes / episodesPerDay, 10) + (numberOfEpisodes%episodesPerDay > 0 ? 1 : 0)
-}
-
-async function createPlan (logger, mongoDb, title, numberOfEpisodes) {
+async function createPlan (logger, mongoDb, title) {
     logger.debug({title}, 'looking for plan in creating state for tv serie')
     const plan = await mongoDb.collection(PLANS_COLLECTION).findOne({
         title,
@@ -108,9 +102,7 @@ async function createPlan (logger, mongoDb, title, numberOfEpisodes) {
     if (!plan) {
         throw new Error('Expected to find a plan in creating state for '+title)
     }
-    const {episodesPerDay} = plan
     return {
-        totalDays: getTotalDaysPlan(numberOfEpisodes, episodesPerDay),
         title
     }
 }
@@ -121,8 +113,8 @@ async function handleConsumeTvSerieSaved(logger, msg, mongoDb) {
     if (!tvSerie) {
         throw new Error('Unexpected tv serie not found '+title)
     }
-    const plan = await createPlan(logger, mongoDb, title, tvSerie.numberOfEpisodes)
-    await savePlan(logger, mongoDb, title, {planState: PLAN_STATE.CREATED, totalDays: plan.totalDays})
+    const plan = await createPlan(logger, mongoDb, title)
+    await savePlan(logger, mongoDb, title, {planState: PLAN_STATE.CREATED})
     return {
         title
     }

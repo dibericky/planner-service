@@ -123,8 +123,7 @@ tap.test('main', t => {
             t.strictSame(omit(['_id'], plans[0]), {
                 title: 'Supernatural',
                 planState: 'created',
-                episodesPerDay: 3,
-                totalDays: 100
+                episodesPerDay: 3
             })
 
             await close()
@@ -188,8 +187,7 @@ tap.test('main', t => {
             t.strictSame(omit(['_id'], plans[0]), {
                 title: 'Supernatural',
                 planState: 'created',
-                episodesPerDay: 3,
-                totalDays: 100
+                episodesPerDay: 3
             })
 
             await close()
